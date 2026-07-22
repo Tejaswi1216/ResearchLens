@@ -6,6 +6,7 @@ from app.pdf_processor import extract_text_from_pdf
 from app.chunker import chunk_pages
 from app.embedding_service import generate_embeddings
 from app.search_service import hybrid_search
+from app.answer_service import generate_answer
 from app.reranker import rerank_results
 from app.paper_store import (
     get_paper_embeddings,
@@ -194,4 +195,55 @@ def index_paper(filename: str):
             if embedded_chunks
             else 0
         ),
+    }
+@app.get("/papers/{filename}/ask")
+def ask_paper(
+    filename: str,
+    query: str,
+    top_k: int = 5,
+):
+    file_path = UPLOAD_DIR / filename
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="PDF not found",
+        )
+
+    embedded_chunks = get_paper_embeddings(filename)
+
+    if embedded_chunks is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Paper is not indexed. Call the index endpoint first.",
+        )
+
+    candidates = hybrid_search(
+        query=query,
+        embedded_chunks=embedded_chunks,
+        top_k=10,
+    )
+
+    results = rerank_results(
+        query=query,
+        candidates=candidates,
+        top_k=top_k,
+    )
+
+    answer = generate_answer(
+        query=query,
+        results=results,
+    )
+
+    return {
+        "filename": filename,
+        "query": query,
+        "answer": answer,
+        "sources": [
+            {
+                "page_number": item["page_number"],
+                "chunk_id": item["chunk_id"],
+            }
+            for item in results
+        ],
     }
